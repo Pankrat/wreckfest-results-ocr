@@ -85,10 +85,15 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     Pix *grey_image = pixConvertRGBToLuminance(cropped_image);
     pixContrastTRC(grey_image, grey_image, 0.6);
     Pix *remove_bg = pixBackgroundNormSimple(grey_image, NULL, NULL);
+    Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 70, 190);
     // Cut out player logos because it confuses the recognition of names
     Box *logos = boxCreate(region_width / 16, 0, region_width / 32, region_height);
-    pixSetInRect(remove_bg, logos);
-    Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 70, 190);
+    pixSetInRect(mono_image, logos);
+    for (int row = 1; row <= 16; ++row) {
+        Box *separator = boxCreate(0, (height / 30) + (height / 24 * row), region_width, 10);
+        pixSetInRect(mono_image, separator);
+        boxDestroy(&separator);
+    }
 #ifdef DEBUG
     pixWritePng("preprocessed.png", mono_image, 0);
 #endif
