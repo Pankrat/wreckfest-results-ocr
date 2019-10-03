@@ -3,6 +3,8 @@
 #include <tesseract/baseapi.h>
 #include <leptonica/allheaders.h>
 
+#define DEBUG
+
 unsigned int position_offset = 0, name_offset = 0, time_offset = 0, car_offset = 0, best_lap_offset = 0;
 
 struct Result {
@@ -15,42 +17,8 @@ struct Result {
     bool dnf;
 };
 
+// TODO: allocate dynamically instead of using global variables
 Result results[25];
-
-void print_alternative_characters(tesseract::TessBaseAPI *api)
-{
-    api->SetVariable("lstm_choice_mode", "2");
-    api->Recognize(0);
-    tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
-    tesseract::ResultIterator* res_it = api->GetIterator();
-    // Get confidence level for alternative symbol choices. Code is based on 
-    // https://github.com/tesseract-ocr/tesseract/blob/master/src/api/hocrrenderer.cpp#L325-L344
-    std::vector<std::vector<std::pair<const char*, float>>>* choiceMap = nullptr;
-    if (res_it != 0) {
-        do {
-            const char* word;
-            float conf;
-            int x1, y1, x2, y2, tcnt = 1, gcnt = 1, wcnt = 0;
-            res_it->BoundingBox(level, &x1, &y1, &x2, &y2);
-            choiceMap = res_it->GetBestLSTMSymbolChoices();
-            
-            for (auto timestep : *choiceMap) {
-                if (timestep.size() > 0) {
-                    for (auto & j : timestep) {
-                        conf = int(j.second * 100);
-                        word =  j.first;
-                        printf("%d  symbol: '%s';  \tconf: %.2f; BoundingBox: %d,%d,%d,%d;\n",
-                                wcnt, word, conf, x1, y1, x2, y2);
-                        gcnt++;
-                    }
-                    tcnt++;
-                }
-                wcnt++;
-                printf("\n");
-            }
-        } while (res_it->Next(level));
-    }
-}
 
 bool process_line(int index, tesseract::ResultIterator* ri) 
 {
@@ -92,7 +60,9 @@ bool process_line(int index, tesseract::ResultIterator* ri)
         delete[] word;
         ++word_index;
     } while (ri->Next(level) && !ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE));
+#ifdef DEBUG
     printf("Position %d (%s) [Offset=%d]: NAME=%s CAR=%s TIME=%s LAP=%s\n", result->position, result->raw_position.c_str(), result->position - index, result->name.c_str(), result->car.c_str(), result->time.c_str(), result->best_lap.c_str());
+#endif
     return ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE);
 }
 
@@ -116,11 +86,12 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     pixContrastTRC(grey_image, grey_image, 0.6);
     Pix *remove_bg = pixBackgroundNormSimple(grey_image, NULL, NULL);
     // Cut out player logos because it confuses the recognition of names
-    Box *logos = boxCreate(80, 0, 40, region_height-1); // TODO: specific to FHD
+    Box *logos = boxCreate(region_width / 16, 0, region_width / 32, region_height);
     pixSetInRect(remove_bg, logos);
-    Pix *scaled_image = pixScaleToSize(remove_bg, 0, 1200);
-    Pix *mono_image = pixCleanBackgroundToWhite(scaled_image, NULL, NULL, 1.0, 70, 190);
+    Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 70, 190);
+#ifdef DEBUG
     pixWritePng("preprocessed.png", mono_image, 0);
+#endif
     
     api->SetImage(mono_image);
     api->Recognize(0);
@@ -131,11 +102,10 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
         }
     }
     outText = api->GetUTF8Text();
-    printf("OCR output of image %d x %d [%d, %d, %d, %d]:\n%s", width, height, left, top, region_width, region_height, outText);
+    // printf("OCR output of image %d x %d [%d, %d, %d, %d]:\n%s", width, height, left, top, region_width, region_height, outText);
     delete [] outText;
 
     pixDestroy(&mono_image);
-    pixDestroy(&scaled_image);
     pixDestroy(&remove_bg);
     pixDestroy(&grey_image);
     pixDestroy(&cropped_image);
@@ -153,8 +123,17 @@ int main(int argc, char *argv [])
     }
     for (int i = 1; i < argc; ++i) {
         char *filename = argv[i];
+#ifdef DEBUG
         printf("Processing %d / %d %s ...\n", i, argc-1, filename);
+#endif
         convert(filename, api);
+        printf("Position,Name,Car,Time,Best Lap\n");
+        for (int index = 1; index < 24; ++index) {
+            Result *res = &results[index];
+            if (!res->name.empty()) {
+                printf("%d,%s,%s,%s,%s\n", res->position, res->name.c_str(), res->car.c_str(), res->time.c_str(), res->best_lap.c_str());
+            }
+        }
     }
     api->End();
     return 0;
