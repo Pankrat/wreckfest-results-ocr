@@ -1,12 +1,12 @@
 #include <string>
 #include <sstream>
+#include <iostream>
+#include <fstream>
 #include <algorithm>
 #include <tesseract/baseapi.h>
 #include <leptonica/allheaders.h>
 
 #define DEBUG
-
-unsigned int position_offset = 0, name_offset = 0, ping_offset = 0, time_offset = 0, car_offset = 0, best_lap_offset = 0;
 
 struct TableLayout {
     unsigned int left, top, bottom, right;
@@ -20,7 +20,7 @@ struct TableLayout {
 };
 
 struct Result {
-    unsigned char position;
+    unsigned short int position;
     std::string raw_position;
     std::string name;
     std::string time;
@@ -293,13 +293,19 @@ int main(int argc, char *argv [])
 #endif
         convert(filename, api);
         clean_positions();
-        printf("Position,Name,Car,Time,Best Lap\n");
+        std::ofstream csvfile;
+        std::string csvname = filename;
+        csvname.append(".csv");
+        csvfile.open(csvname, std::ios::trunc);
+        csvfile << "Position,Name,Car,Time,Best Lap\n";
         for (int index = 0; index < 16; ++index) {
             Result *res = &results[index];
             if (!res->name.empty()) {
-                printf("%d,%s,%s,%s,%s\n", res->position, res->name.c_str(), res->car.c_str(), res->time.c_str(), res->best_lap.c_str());
+                csvfile << res->position;
+                csvfile << ',' << res->name << ',' << res->car << ',' << res->time << ',' << res->best_lap << std::endl;
             }
         }
+        csvfile.close();
     }
     api->End();
     return 0;
