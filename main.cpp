@@ -85,29 +85,29 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
     tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
     do {
         const char* word = ri->GetUTF8Text(level);
-        float conf = ri->Confidence(level);
         int x1, y1, x2, y2;
         ri->BoundingBox(level, &x1, &y1, &x2, &y2);
+
         std::string token = word;
-        if (result->raw_position.empty() && x1 >= layout->position_left && x2 < layout->position_right) {
+        if (result->raw_position.empty() && x1 >= (int)layout->position_left && x2 < (int)layout->position_right) {
             result->raw_position = std::string(word);
             result->position = std::atoi(word);
-        } else if (result->name.empty() && x1 >= layout->name_left) {
+        } else if (result->name.empty() && x1 >= (int)layout->name_left) {
             result->name = token;
-        } else if (!result->name.empty() && x2 < layout->name_right) {
+        } else if (!result->name.empty() && x2 < (int)layout->name_right) {
             result->name.append(" ");
             result->name.append(token);
-        } else if (x1 >= layout->car_left && x2 < layout->car_right) {
+        } else if (x1 >= (int)layout->car_left && x2 < (int)layout->car_right) {
             if (!result->car.empty()) {
                 result->car.append(" ");
             }
             result->car.append(token);
-        } else if (x1 >= layout->time_left && x2 < layout->time_right) {
+        } else if (x1 >= (int)layout->time_left && x2 < (int)layout->time_right) {
             if (!result->time.empty()) {
                 result->time.append(" ");
             }
             result->time.append(token);
-        } else if (result->best_lap.empty() && x1 >= layout->lap_left) {
+        } else if (result->best_lap.empty() && x1 >= (int)layout->lap_left) {
             result->best_lap = clean_time(token);
         }
         delete[] word;
@@ -149,7 +149,6 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
     tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
     while (ri != 0) {
         const char* word = ri->GetUTF8Text(level);
-        float conf = ri->Confidence(level);
         int x1, y1, x2, y2;
         ri->BoundingBox(level, &x1, &y1, &x2, &y2);
         std::string token = word;
@@ -189,7 +188,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
         l_uint32 pixel;
         l_int32 sep1start = 0;
         bool dark = false;
-        for (int y = layout->top; y < layout->bottom; ++y) {
+        for (unsigned int y = layout->top; y < layout->bottom; ++y) {
             pixGetPixel(image, layout->position_left - 5, y, &pixel);
             if (pixel < 180 && !dark) {
                 printf("%d@%d ", pixel, y);
@@ -213,8 +212,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
 void convert(char *filename, tesseract::TessBaseAPI *api)
 {
     l_int32 width, height;
-    char *outText;
-    TableLayout layout;
+    TableLayout layout{};
     pixReadHeader(filename, nullptr, &width, &height, nullptr, nullptr, nullptr); 
     float aspect_ratio = (float)width / height;
     float crop_factor = 3.0;
