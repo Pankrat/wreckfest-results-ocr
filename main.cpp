@@ -3,8 +3,8 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
-#include <tesseract/baseapi.h>
 #include <leptonica/allheaders.h>
+#include <tesseract/baseapi.h>
 
 #define DEBUG
 
@@ -146,20 +146,24 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
     api->SetImage(image);
     api->Recognize(0);
     tesseract::ResultIterator* ri = api->GetIterator();
+    ri->SetBoundingBoxComponents(false, false);
     tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
     while (ri != 0) {
         const char* word = ri->GetUTF8Text(level);
         int x1, y1, x2, y2;
-        ri->BoundingBox(level, &x1, &y1, &x2, &y2);
+        ri->BoundingBox(level, 0, &x1, &y1, &x2, &y2);
+        float height, ascenders, descenders;
+        ri->RowAttributes(&height, &descenders, &ascenders);
         std::string token = word;
+        printf("%s @ %d %d %d %d [%f %f %f]\n", word, x1, y1, x2, y2, height, ascenders, descenders);
         delete[] word;
         // TODO: Are there localized column captions in Wreckfest?
         if (iequals(token, "POS")) {
             layout->position_left = x1 - 5;
             layout->position_right = x2 + 10;
-            layout->left = x1 - 10;
-            layout->top = y2 + 10; 
-            layout->line_height = y2 - y1;
+            layout->left = x1;
+            layout->top = y2; 
+            layout->line_height = (int)height;
             layout->row_height = (int)(layout->line_height * 3) - 1;
         } else if (iequals(token, "NAME")) {
             layout->name_left = x1 - 5;
@@ -168,7 +172,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
         } else if (iequals(token, "CLASS") && layout->name_right == 0) { // fallback for singleplayer
             layout->name_right = x1 - 10;
         } else if (iequals(token, "CAR")) {
-            layout->car_left = x1 - 5;
+            layout->car_left = x1 - 10;
         } else if (iequals(token, "TIME")) {
             layout->car_right = x1 - 10;
             layout->time_left = x1 - 5;
@@ -185,11 +189,12 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
     // Scan a single pixel column to find the exact row height and line
     // separator distance which is needed to clear out the separator lines.
     if (layout->position_left != 0) {
-        l_uint32 pixel;
+        l_uint32 pixel = 0;
         l_int32 sep1start = 0;
+		l_int32 column = layout->position_left - 5;
         bool dark = false;
-        for (unsigned int y = layout->top; y < layout->bottom; ++y) {
-            pixGetPixel(image, layout->position_left - 5, y, &pixel);
+        for (unsigned int y = layout->top; (int)y < pixGetHeight(image); ++y) {
+            pixGetPixel(image, column, y, &pixel);
             if (pixel < 180 && !dark) {
                 printf("%d@%d ", pixel, y);
                 if (sep1start == 0) {
@@ -203,6 +208,8 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
                 dark = false;
             }
         }
+        // Fix top coordinate for padded bounding boxes
+        layout->top = sep1start - layout->row_height;
     }
     layout->bottom = layout->row_height * 16 + layout->top;
     printf("Layout: %d,%d,%d,%d Line height=%d Row height=%d\n", layout->left, layout->top, layout->right, layout->bottom, layout->line_height, layout->row_height);
@@ -239,7 +246,7 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
         exit(1);
     }
     // Blank out player logos
-    Box *logos = boxCreate(layout.position_right, 0, layout.name_left - layout.position_right, region_height);
+    Box *logos = boxCreate(layout.position_right, 0, layout.name_left - layout.position_right + 5, region_height);
     pixSetInRect(mono_image, logos);
     boxDestroy(&logos);
     // Blank out car class (the symbol can't be extracted and the A and B class
@@ -249,7 +256,7 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     boxDestroy(&car_class);
     // Blank out line separators
     for (int row = 1; row <= 16; ++row) {
-        Box *separator = boxCreate(0, layout.top + (layout.row_height * row) - 1, region_width, layout.line_height);
+        Box *separator = boxCreate(0, layout.top + (layout.row_height * row) - 1, region_width, layout.row_height / 3);
         pixSetInRect(mono_image, separator);
         boxDestroy(&separator);
     }
