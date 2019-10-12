@@ -12,7 +12,7 @@ def run_conversion(filename):
     csv = os.path.splitext(filename)[0] + '.csv'
     if os.path.exists(csv):
         os.remove(csv)
-    subprocess.run(["./convert2csv", filename], stdout=subprocess.PIPE)
+    subprocess.run(["./wfocr", filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def check(filename, verbose=True):

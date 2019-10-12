@@ -42,7 +42,7 @@ Result results[16];
 const l_uint32 edge_detection_threshold_low = 190;
 const l_uint32 edge_detection_threshold_high = 240;
 
-bool is_valid_time_digit(char c)
+bool is_invalid_time_digit(char c)
 {
     switch (c) {
         case '0':
@@ -63,6 +63,11 @@ bool is_valid_time_digit(char c)
     }
 }
 
+bool is_invalid_car_digit(char c)
+{
+    return not (std::isalnum(c) || (c == ' '));
+}
+
 // https://stackoverflow.com/a/4119881
 bool iequals(const std::string& a, const std::string& b)
 {
@@ -80,7 +85,7 @@ std::string clean_time(std::string &time)
     } else if (time[0] == '+')  {
         return time;
     }
-    time.erase(std::remove_if(time.begin(), time.end(), &is_valid_time_digit), time.end());
+    time.erase(std::remove_if(time.begin(), time.end(), &is_invalid_time_digit), time.end());
     if (time.length() >= 7 && time[2] != ':') {
         time.insert(2, ":");
     }
@@ -88,6 +93,12 @@ std::string clean_time(std::string &time)
         time.insert(5, ".");
     }
     return time;
+}
+
+std::string clean_car(std::string &car)
+{
+    car.erase(std::remove_if(car.begin(), car.end(), &is_invalid_car_digit), car.end());
+    return car;
 }
 
 bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *layout) 
@@ -139,6 +150,7 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
         }
         delete[] word;
     } while (ri->Next(level) && !ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE));
+    result->car = clean_car(result->car);
     result->time = clean_time(result->time);
     result->best_lap = clean_time(result->best_lap);
     return ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE);
