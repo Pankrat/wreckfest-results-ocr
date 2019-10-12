@@ -35,20 +35,20 @@ def check(filename, verbose=True):
             expecteddata = expected.readlines()
             if len(csvdata) < len(expecteddata):
                 csvdata += [',,,,'] * (len(expecteddata) - len(csvdata))
-            for l1, l2 in zip(csvdata, expecteddata):
-                d1 = l1.strip().split(',')
-                d2 = l2.strip().split(',')
-                if l1 == l2 and verbose:
-                    print("CORRECT: {}".format(l1.strip()))
-                elif verbose:
-                    print("WRONG:   {} != {}".format(l1.strip(), l2.strip()))
-                for v1, v2 in zip(d1, d2):
-                    count += 1
-                    if v1 != v2:
-                        if verbose:
-                            print(" > {} != {}".format(v1, v2))
-                    else:
-                        correct += 1
+            exdata = [l.strip().split(',') for l in expecteddata]
+            exdata = {d[0]: d[1:] for d in exdata}
+            data = [l.strip().split(',') for l in csvdata]
+            data = {d[0]: d[1:] for d in data}
+            for position, values in exdata.items():
+                count += len(values) + 1
+                if position in data:
+                    correct += 1
+                    for v1, v2 in zip(data[position], values):
+                        if v1 != v2:
+                            if verbose:
+                                print(" > {} != {}".format(v1, v2))
+                        else:
+                            correct += 1
         return correct, count
     return 0, 1
 

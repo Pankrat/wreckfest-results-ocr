@@ -10,8 +10,7 @@
 #define DEBUG
 
 struct TableLayout {
-    unsigned int left, top, bottom, right;
-    unsigned int line_height, row_height;
+    unsigned int left, top, right;
 
     unsigned int position_left, position_right;
     unsigned int name_left, name_right;
@@ -40,7 +39,8 @@ namespace fs = std::experimental::filesystem;
 // TODO: allocate dynamically instead of using global variables
 Result results[16];
 
-const l_uint32 edge_detection_threshold = 190;
+const l_uint32 edge_detection_threshold_low = 190;
+const l_uint32 edge_detection_threshold_high = 240;
 
 bool is_valid_time_digit(char c)
 {
@@ -191,8 +191,6 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             layout->position_right = x2 + 10;
             layout->left = x1;
             layout->top = y2; 
-            layout->line_height = (int)height;
-            layout->row_height = (int)(layout->line_height * 3) - 1;
         } else if (iequals(token, "NAME")) {
             layout->name_left = x1 - 5;
         } else if (iequals(token, "PING")) { // multiplayer only
@@ -222,47 +220,38 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             break;
         }
     }
+    printf("Layout: %d,%d,%d\n", layout->left, layout->top, layout->right);
+    return (layout->top != 0);
+}
+
+void blank_separators(Pix *image, TableLayout *layout)
+{
     // Scan a single pixel column to find the exact row height and line
     // separator distance which is needed to clear out the separator lines.
     if (layout->position_left != 0) {
         l_uint32 pixel = 0;
-        l_int32 sep1start = 0;
-		l_int32 column = layout->position_left - 5;
+        l_int32 sepstart = -1;
+        l_int32 column = layout->position_left - 5;
         bool dark = false;
-        int skipped_row = 0;
         printf("DEBUG: Scanning column %d\n", column);
         for (unsigned int y = layout->top; (int)y < pixGetHeight(image); ++y) {
             pixGetPixel(image, column, y, &pixel);
-            if (pixel < edge_detection_threshold && !dark) {
+            if (pixel < edge_detection_threshold_low && !dark) {
                 printf("%d@%d ", pixel, y);
-                if (sep1start == 0) {
-                    sep1start = y;
-                } else {
-                    layout->row_height = y - sep1start;
-                    break;
+                if (sepstart == -1) {
+                    sepstart = y;
                 }
                 dark = true;
-            } else if (pixel >= edge_detection_threshold && dark) {
-                printf("-> %d@%d ", pixel, y);
-                // If the dark block is higher than a text row, we might have
-                // mistaken a highlighted row for a separator. Reset the index
-                // so that we measure the next separator instead.
-                if ((y - sep1start) > layout->line_height) {
-                    sep1start = 0;
-                    skipped_row += 1;
-                    printf("[Skipped] ");
-                }
+            } else if (pixel >= edge_detection_threshold_high && dark) {
+                printf("-> %d@%d\n", pixel, y);
+                Box *separator = boxCreate(0, sepstart - 5, layout->right, y - sepstart + 10);
+                pixSetInRect(image, separator);
+                boxDestroy(&separator);
                 dark = false;
+                sepstart = -1;
             }
         }
-        // Fix top coordinate for padded bounding boxes
-        if (sep1start > (l_int32)layout->row_height) {
-            layout->top = sep1start - (layout->row_height * (skipped_row + 1));
-        }
     }
-    layout->bottom = layout->row_height * 16 + layout->top;
-    printf("Layout: %d,%d,%d,%d Line height=%d Row height=%d\n", layout->left, layout->top, layout->right, layout->bottom, layout->line_height, layout->row_height);
-    return (layout->top != 0);
 }
 
 void convert(char *filename, tesseract::TessBaseAPI *api)
@@ -304,17 +293,13 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     pixSetInRect(mono_image, car_class);
     boxDestroy(&car_class);
     // Blank out line separators
-    for (int row = 1; row <= 16; ++row) {
-        Box *separator = boxCreate(0, layout.top + (layout.row_height * row) - 1, region_width, layout.row_height / 3);
-        pixSetInRect(mono_image, separator);
-        boxDestroy(&separator);
-    }
+    blank_separators(mono_image, &layout);
 #ifdef DEBUG
     pixWritePng("preprocessed.png", mono_image, 0);
 #endif
     
     api->SetImage(mono_image);
-    api->SetRectangle(layout.left, layout.top, layout.right - layout.left, layout.bottom - layout.top);
+    api->SetRectangle(layout.left, layout.top, layout.right - layout.left, region_height - layout.top);
     api->Recognize(0);
     tesseract::ResultIterator* ri = api->GetIterator();
     if (ri != 0) {
