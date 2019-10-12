@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <experimental/filesystem>
 #include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
 
@@ -17,20 +18,29 @@ struct TableLayout {
     unsigned int car_left, car_right;
     unsigned int time_left, time_right;
     unsigned int lap_left;
+    unsigned int wreck_ratio_left, wreck_ratio_right;
+    unsigned int score_left;
 };
 
 struct Result {
     unsigned short int position;
     std::string raw_position;
     std::string name;
-    std::string time;
     std::string car;
-    std::string best_lap;
+    std::string time; // race only
+    std::string best_lap; // race only
+    std::string wreck_ratio; // derby only
+    std::string score; // derby only
     bool dnf;
+    bool derby;
 };
+
+namespace fs = std::experimental::filesystem;
 
 // TODO: allocate dynamically instead of using global variables
 Result results[16];
+
+const l_uint32 edge_detection_threshold = 180;
 
 bool is_valid_time_digit(char c)
 {
@@ -107,12 +117,25 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
                 result->time.append(" ");
             }
             result->time.append(token);
-        } else if (result->best_lap.empty() && x1 >= (int)layout->lap_left) {
-            result->best_lap = clean_time(token);
+            result->derby = false;
+        } else if (x1 >= (int)layout->wreck_ratio_left && x2 < (int)layout->wreck_ratio_right) {
+            if (!result->wreck_ratio.empty()) {
+                result->wreck_ratio.append(" ");
+            }
+            result->wreck_ratio.append(token);
+            result->derby = true;
+        } else if (x1 >= (int)layout->lap_left && !result->derby) {
+            if (!result->best_lap.empty()) {
+                result->best_lap.append(" ");
+            }
+            result->best_lap.append(token);
+        } else if (x1 >= (int)layout->score_left && result->derby) {
+            result->score = token;
         }
         delete[] word;
     } while (ri->Next(level) && !ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE));
     result->time = clean_time(result->time);
+    result->best_lap = clean_time(result->best_lap);
     return ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE);
 }
 
@@ -176,10 +199,18 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
         } else if (iequals(token, "TIME")) {
             layout->car_right = x1 - 10;
             layout->time_left = x1 - 5;
+        } else if (iequals(token, "WRECK")) {
+            layout->car_right = x1 - 10;
+            layout->wreck_ratio_left = x1 - 5;
         } else if (iequals(token, "BEST")) {
-            layout->time_right = x1 - 10;
-            layout->lap_left = x1 - 5;
+            layout->time_right = x1 - 15;
+            layout->lap_left = x1 - 15;
             layout->right = x2 + 250; // XXX 
+            break;
+        } else if (iequals(token, "SCORE")) {
+            layout->wreck_ratio_right = x1 - 10;
+            layout->score_left = x1 - 5;
+            layout->right = x2 + 250; // XXX
             break;
         }
         if (!ri->Next(level)) {
@@ -193,9 +224,11 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
         l_int32 sep1start = 0;
 		l_int32 column = layout->position_left - 5;
         bool dark = false;
+        int skipped_row = 0;
+        printf("DEBUG: Scanning column %d\n", column);
         for (unsigned int y = layout->top; (int)y < pixGetHeight(image); ++y) {
             pixGetPixel(image, column, y, &pixel);
-            if (pixel < 180 && !dark) {
+            if (pixel < edge_detection_threshold && !dark) {
                 printf("%d@%d ", pixel, y);
                 if (sep1start == 0) {
                     sep1start = y;
@@ -204,12 +237,23 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
                     break;
                 }
                 dark = true;
-            } else if (pixel >= 180 && dark) {
+            } else if (pixel >= edge_detection_threshold && dark) {
+                printf("-> %d@%d ", pixel, y);
+                // If the dark block is higher than a text row, we might have
+                // mistaken a highlighted row for a separator. Reset the index
+                // so that we measure the next separator instead.
+                if ((y - sep1start) > layout->line_height) {
+                    sep1start = 0;
+                    skipped_row += 1;
+                    printf("[Skipped] ");
+                }
                 dark = false;
             }
         }
         // Fix top coordinate for padded bounding boxes
-        layout->top = sep1start - layout->row_height;
+        if (sep1start > (l_int32)layout->row_height) {
+            layout->top = sep1start - (layout->row_height * (skipped_row + 1));
+        }
     }
     layout->bottom = layout->row_height * 16 + layout->top;
     printf("Layout: %d,%d,%d,%d Line height=%d Row height=%d\n", layout->left, layout->top, layout->right, layout->bottom, layout->line_height, layout->row_height);
@@ -240,13 +284,13 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     Pix *grey_image = pixConvertRGBToLuminance(cropped_image);
     pixContrastTRC(grey_image, grey_image, 0.6);
     Pix *remove_bg = pixBackgroundNormSimple(grey_image, NULL, NULL);
-    Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 70, 190);
+    Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 50, 190);
     if (!detect_layout(mono_image, api, &layout)) {
         fprintf(stderr, "Could not detect layout.\n");
         exit(1);
     }
     // Blank out player logos
-    Box *logos = boxCreate(layout.position_right, 0, layout.name_left - layout.position_right + 5, region_height);
+    Box *logos = boxCreate(layout.position_right, 0, layout.name_left - layout.position_right + 3, region_height);
     pixSetInRect(mono_image, logos);
     boxDestroy(&logos);
     // Blank out car class (the symbol can't be extracted and the A and B class
@@ -284,6 +328,13 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     boxDestroy(&box);
 }
 
+std::string get_output_filename(const char *filename)
+{
+    fs::path p = filename;
+    p.replace_extension(".csv");
+    return p.string();
+}
+
 int main(int argc, char *argv [])
 {
     tesseract::TessBaseAPI *api = new tesseract::TessBaseAPI();
@@ -299,15 +350,23 @@ int main(int argc, char *argv [])
         convert(filename, api);
         clean_positions();
         std::ofstream csvfile;
-        std::string csvname = filename;
-        csvname.append(".csv");
+        std::string csvname = get_output_filename(filename);
         csvfile.open(csvname, std::ios::trunc);
-        csvfile << "Position,Name,Car,Time,Best Lap\n";
+        if (results[0].derby) {
+            csvfile << "Position,Name,Car,Wreck Ratio,Score\n";
+        } else {
+            csvfile << "Position,Name,Car,Time,Best Lap\n";
+        }
         for (int index = 0; index < 16; ++index) {
             Result *res = &results[index];
             if (!res->name.empty()) {
                 csvfile << res->position;
-                csvfile << ',' << res->name << ',' << res->car << ',' << res->time << ',' << res->best_lap << std::endl;
+                csvfile << ',' << res->name << ',' << res->car << ',';
+                if (res->derby) {
+                    csvfile << res->wreck_ratio << ',' << res->score << std::endl;
+                } else {
+                    csvfile << res->time << ',' << res->best_lap << std::endl;
+                }
             }
         }
         csvfile.close();

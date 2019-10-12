@@ -29,6 +29,5 @@ $ make
 
 ## Known issues
 
-* Can't extract derby results yet (crash)
 * Highlighted rows confuse the text extraction
 * Tested with 1920x1080 and 3440x1440. Other resolutions or aspect ratios might not work yet.

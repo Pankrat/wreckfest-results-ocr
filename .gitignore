@@ -30,3 +30,11 @@
 *.exe
 *.out
 *.app
+
+# Build artifacts
+test/*.csv
+preprocessed.png
+convert2csv
+
+# Vim
+*.swp
