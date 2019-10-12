@@ -9,8 +9,10 @@ def find_screenshots():
 
 
 def run_conversion(filename):
-    os.remove(os.path.splitext(filename)[0] + '.csv')
-    subprocess.run(["./convert2csv", filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    csv = os.path.splitext(filename)[0] + '.csv'
+    if os.path.exists(csv):
+        os.remove(csv)
+    subprocess.run(["./convert2csv", filename], stdout=subprocess.PIPE)
 
 
 def check(filename, verbose=True):
@@ -18,6 +20,7 @@ def check(filename, verbose=True):
     reference = output + '.reference'
     if not os.path.exists(output):
         print("Cannot find {} - program crashed or wrong location?".format(output))
+        return 0, 1
     if verbose:
         print("\n# {}".format(output))
     with open(output) as actual:
@@ -30,6 +33,8 @@ def check(filename, verbose=True):
         with open(reference) as expected:
             count, correct = 0, 0
             expecteddata = expected.readlines()
+            if len(csvdata) < len(expecteddata):
+                csvdata += [',,,,'] * (len(expecteddata) - len(csvdata))
             for l1, l2 in zip(csvdata, expecteddata):
                 d1 = l1.strip().split(',')
                 d2 = l2.strip().split(',')
@@ -55,5 +60,9 @@ if __name__ == "__main__":
     results = {}
     for screenshot in screenshots:
         results[screenshot] = check(screenshot, verbose=False)
+    total_correct, total_count = 0, 0
     for screenshot, (correct, count) in results.items():
+        total_correct += correct
+        total_count += count
         print("{:>3}% {}: {}/{}".format(correct * 100 // count, screenshot, correct, count))
+    print("{:>3}% TOTAL: {}/{}".format(total_correct * 100 // total_count, total_correct, total_count))

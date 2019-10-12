@@ -40,7 +40,7 @@ namespace fs = std::experimental::filesystem;
 // TODO: allocate dynamically instead of using global variables
 Result results[16];
 
-const l_uint32 edge_detection_threshold = 180;
+const l_uint32 edge_detection_threshold = 190;
 
 bool is_valid_time_digit(char c)
 {
@@ -97,6 +97,11 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
         const char* word = ri->GetUTF8Text(level);
         int x1, y1, x2, y2;
         ri->BoundingBox(level, &x1, &y1, &x2, &y2);
+
+        if (word == nullptr) {
+            printf("ERROR: GetUTF8Text returned NULL on %d %d %d %d\n", x1, y1, x2, y2);
+            break;
+        }
 
         std::string token = word;
         if (result->raw_position.empty() && x1 >= (int)layout->position_left && x2 < (int)layout->position_right) {
