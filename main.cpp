@@ -364,7 +364,8 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
 {
     l_int32 width, height;
     TableLayout layout{};
-    pixReadHeader(filename, nullptr, &width, &height, nullptr, nullptr, nullptr); 
+    Pix *image = pixRead(filename);
+    pixGetDimensions(image, &width, &height, nullptr);
     float aspect_ratio = (float)width / height;
     float crop_factor = 3.0;
     // Crop empty spaces for ultrawide resolutions
@@ -377,7 +378,6 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     l_int32 region_width = (l_int32)(width - left - (width / (int)(crop_factor * crop_factor * crop_factor / 3)));
     l_int32 region_height = height - top - (height / 12);
     Box *box = boxCreate(left, top, region_width, region_height);
-    Pix *image = pixRead(filename);
     Pix *cropped_image = pixClipRectangle(image, box, nullptr);
     // Optimize image for OCR (negative colors, contrast enhancement, background removal)
     pixInvert(cropped_image, cropped_image);
