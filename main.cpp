@@ -3,6 +3,7 @@
 #include <iostream>
 #include <fstream>
 #include <algorithm>
+#include <map>
 #include <experimental/filesystem>
 #include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
@@ -39,8 +40,55 @@ namespace fs = std::experimental::filesystem;
 // TODO: allocate dynamically instead of using global variables
 Result results[16];
 
+std::map<std::string, std::string> drivers;
+
 const l_uint32 edge_detection_threshold_low = 190;
 const l_uint32 edge_detection_threshold_high = 240;
+
+// Source: https://rosettacode.org/wiki/Levenshtein_distance#C.2B.2B
+// Compute Levenshtein Distance
+// Martin Ettl, 2012-10-05
+size_t uiLevenshteinDistance(const std::string &s1, const std::string &s2)
+{
+    const size_t m(s1.size());
+    const size_t n(s2.size());
+
+    if( m==0 ) return n;
+    if( n==0 ) return m;
+
+    size_t *costs = new size_t[n + 1];
+
+    for( size_t k=0; k<=n; k++ ) costs[k] = k;
+
+    size_t i = 0;
+    for ( std::string::const_iterator it1 = s1.begin(); it1 != s1.end(); ++it1, ++i )
+    {
+        costs[0] = i+1;
+        size_t corner = i;
+
+        size_t j = 0;
+        for ( std::string::const_iterator it2 = s2.begin(); it2 != s2.end(); ++it2, ++j )
+        {
+            size_t upper = costs[j+1];
+            if( *it1 == *it2 )
+            {
+                costs[j+1] = corner;
+            }
+            else
+            {
+                size_t t(upper<corner?upper:corner);
+                costs[j+1] = (costs[j]<t?costs[j]:t)+1;
+            }
+
+            corner = upper;
+        }
+    }
+
+    size_t result = costs[n];
+    delete [] costs;
+
+    return result;
+}
 
 bool is_invalid_time_digit(char c)
 {
@@ -78,6 +126,28 @@ bool iequals(const std::string& a, const std::string& b)
                       });
 }
 
+std::string clean_driver(std::string &driver)
+{
+    if (drivers.find(driver) == drivers.end()) {
+        size_t min_distance = driver.length() / 2;
+        std::string similar_name;
+        // Iterate over known drivers, compute levenshtein distance, choose the min distance
+        for (auto iter = drivers.begin(); iter != drivers.end(); ++iter) {
+            const std::string adriver = iter->first;
+            const size_t distance = uiLevenshteinDistance(driver, adriver);
+            if (distance < min_distance) {
+                min_distance = distance;
+                similar_name = adriver;
+            }
+        }
+        if (!similar_name.empty()) {
+            printf("Replacing %s with %s (levenshtein distance is %zu)\n", driver.c_str(), similar_name.c_str(), min_distance);
+            return similar_name;
+        }
+    }
+    return driver;
+}
+
 std::string clean_time(std::string &time)
 {
     if (time.compare("DNF") == 0 || time.compare("ONF") == 0) {
@@ -99,6 +169,29 @@ std::string clean_car(std::string &car)
 {
     car.erase(std::remove_if(car.begin(), car.end(), &is_invalid_car_digit), car.end());
     return car;
+}
+
+void read_drivers(std::map<std::string, std::string> *drivers, const char *filename)
+{
+    std::ifstream file;
+    std::string line;
+    file.open(filename);
+    if (!file) {
+        printf("Can't read drivers from %s.\n", filename);
+        return;
+    }
+    for (std::string line; getline(file, line);) {
+        // Split on first ,
+        size_t sep_offset = line.find_first_of(',');
+        if (sep_offset == std::string::npos) {
+            (*drivers)[line] = "";
+        } else {
+            std::string team = line.substr(0, sep_offset);
+            std::string driver = line.substr(sep_offset + 1, line.length() - sep_offset - 1);
+            (*drivers)[driver] = team;
+        }
+    }
+    file.close();
 }
 
 bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *layout) 
@@ -150,6 +243,7 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
         }
         delete[] word;
     } while (ri->Next(level) && !ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE));
+    result->name = clean_driver(result->name);
     result->car = clean_car(result->car);
     result->time = clean_time(result->time);
     result->best_lap = clean_time(result->best_lap);
@@ -243,7 +337,7 @@ void blank_separators(Pix *image, TableLayout *layout)
     if (layout->position_left != 0) {
         l_uint32 pixel = 0;
         l_int32 sepstart = -1;
-        l_int32 column = layout->position_left - 5;
+        const l_int32 column = layout->position_left - 5;
         bool dark = false;
         printf("DEBUG: Scanning column %d\n", column);
         for (unsigned int y = layout->top; (int)y < pixGetHeight(image); ++y) {
@@ -337,6 +431,30 @@ std::string get_output_filename(const char *filename)
     return p.string();
 }
 
+void write_results(const std::string &filename)
+{
+    std::ofstream csvfile;
+    csvfile.open(filename, std::ios::trunc);
+    if (results[0].derby) {
+        csvfile << "Position,Name,Car,Wreck Ratio,Score\n";
+    } else {
+        csvfile << "Position,Name,Car,Time,Best Lap\n";
+    }
+    for (int index = 0; index < 16; ++index) {
+        Result *res = &results[index];
+        if (!res->name.empty()) {
+            csvfile << res->position;
+            csvfile << ',' << res->name << ',' << res->car << ',';
+            if (res->derby) {
+                csvfile << res->wreck_ratio << ',' << res->score << std::endl;
+            } else {
+                csvfile << res->time << ',' << res->best_lap << std::endl;
+            }
+        }
+    }
+    csvfile.close();
+}
+
 int main(int argc, char *argv [])
 {
     tesseract::TessBaseAPI *api = new tesseract::TessBaseAPI();
@@ -344,6 +462,7 @@ int main(int argc, char *argv [])
         fprintf(stderr, "Could not initialize tesseract.\n");
         exit(1);
     }
+    read_drivers(&drivers, "drivers.txt");
     for (int i = 1; i < argc; ++i) {
         char *filename = argv[i];
 #ifdef DEBUG
@@ -351,27 +470,8 @@ int main(int argc, char *argv [])
 #endif
         convert(filename, api);
         clean_positions();
-        std::ofstream csvfile;
         std::string csvname = get_output_filename(filename);
-        csvfile.open(csvname, std::ios::trunc);
-        if (results[0].derby) {
-            csvfile << "Position,Name,Car,Wreck Ratio,Score\n";
-        } else {
-            csvfile << "Position,Name,Car,Time,Best Lap\n";
-        }
-        for (int index = 0; index < 16; ++index) {
-            Result *res = &results[index];
-            if (!res->name.empty()) {
-                csvfile << res->position;
-                csvfile << ',' << res->name << ',' << res->car << ',';
-                if (res->derby) {
-                    csvfile << res->wreck_ratio << ',' << res->score << std::endl;
-                } else {
-                    csvfile << res->time << ',' << res->best_lap << std::endl;
-                }
-            }
-        }
-        csvfile.close();
+        write_results(csvname);
     }
     api->End();
     return 0;
