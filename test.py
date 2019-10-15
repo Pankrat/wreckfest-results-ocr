@@ -59,7 +59,7 @@ if __name__ == "__main__":
         run_conversion(screenshot)
     results = {}
     for screenshot in screenshots:
-        results[screenshot] = check(screenshot, verbose=False)
+        results[screenshot] = check(screenshot, verbose=True)
     total_correct, total_count = 0, 0
     for screenshot, (correct, count) in results.items():
         total_correct += correct

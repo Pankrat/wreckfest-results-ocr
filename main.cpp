@@ -11,7 +11,7 @@
 #define DEBUG
 
 struct TableLayout {
-    unsigned int left, top, right;
+    unsigned int left, top, right, bottom;
 
     unsigned int position_left, position_right;
     unsigned int name_left, name_right;
@@ -40,7 +40,8 @@ namespace fs = std::experimental::filesystem;
 // TODO: allocate dynamically instead of using global variables
 Result results[16];
 
-std::map<std::string, std::string> drivers;
+std::map<std::string, std::string> drivers; // Driver -> Team
+std::map<std::string, int> points; // Position/Label -> Points
 
 const l_uint32 edge_detection_threshold_low = 190;
 const l_uint32 edge_detection_threshold_high = 240;
@@ -153,6 +154,9 @@ std::string clean_time(std::string &time)
     if (time.compare("DNF") == 0 || time.compare("ONF") == 0) {
         return std::string("DNF");
     } else if (time[0] == '+')  {
+        if (time[2] == 'L') {
+            time.insert(2, " ");
+        }
         return time;
     }
     time.erase(std::remove_if(time.begin(), time.end(), &is_invalid_time_digit), time.end());
@@ -161,6 +165,11 @@ std::string clean_time(std::string &time)
     }
     if (time.length() >= 7 && time[5] != '.') {
         time.insert(5, ".");
+    }
+    // Special handling for times where the leading zero is missing in lap
+    // times (introduces an error if the missed digit is non-zero)
+    if (time.find_first_of(':') == 1) {
+        time.insert(0, "0");
     }
     return time;
 }
@@ -190,6 +199,22 @@ void read_drivers(std::map<std::string, std::string> *drivers, const char *filen
             std::string driver = line.substr(sep_offset + 1, line.length() - sep_offset - 1);
             (*drivers)[driver] = team;
         }
+    }
+    file.close();
+}
+
+void read_points(std::map<std::string, int> *points, const char *filename)
+{
+    std::ifstream file;
+    std::string label;
+    int score;
+    file.open(filename);
+    if (!file) {
+        printf("Can't read points from %s.\n", filename);
+        return;
+    }
+    while (file >> label >> score) {
+        (*points)[label] = score;
     }
     file.close();
 }
@@ -247,6 +272,7 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
     result->car = clean_car(result->car);
     result->time = clean_time(result->time);
     result->best_lap = clean_time(result->best_lap);
+    result->dnf = iequals(result->time, "DNF");
     return ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE);
 }
 
@@ -326,7 +352,8 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             break;
         }
     }
-    printf("Layout: %d,%d,%d\n", layout->left, layout->top, layout->right);
+    layout->bottom = pixGetHeight(image);
+    printf("Layout: %d,%d,%d,%d\n", layout->left, layout->top, layout->right, layout->bottom);
     return (layout->top != 0);
 }
 
@@ -340,7 +367,7 @@ void blank_separators(Pix *image, TableLayout *layout)
         const l_int32 column = layout->position_left - 5;
         bool dark = false;
         printf("DEBUG: Scanning column %d\n", column);
-        for (unsigned int y = layout->top; (int)y < pixGetHeight(image); ++y) {
+        for (unsigned int y = layout->top; y < layout->bottom; ++y) {
             pixGetPixel(image, column, y, &pixel);
             if (pixel < edge_detection_threshold_low && !dark) {
                 printf("%d@%d ", pixel, y);
@@ -360,10 +387,9 @@ void blank_separators(Pix *image, TableLayout *layout)
     }
 }
 
-void convert(char *filename, tesseract::TessBaseAPI *api)
+Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *layout)
 {
     l_int32 width, height;
-    TableLayout layout{};
     Pix *image = pixRead(filename);
     pixGetDimensions(image, &width, &height, nullptr);
     float aspect_ratio = (float)width / height;
@@ -385,27 +411,38 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     pixContrastTRC(grey_image, grey_image, 0.6);
     Pix *remove_bg = pixBackgroundNormSimple(grey_image, NULL, NULL);
     Pix *mono_image = pixCleanBackgroundToWhite(remove_bg, NULL, NULL, 1.0, 50, 190);
-    if (!detect_layout(mono_image, api, &layout)) {
+    if (!detect_layout(mono_image, api, layout)) {
         fprintf(stderr, "Could not detect layout.\n");
         exit(1);
     }
     // Blank out player logos
-    Box *logos = boxCreate(layout.position_right, 0, layout.name_left - layout.position_right + 3, region_height);
+    Box *logos = boxCreate(layout->position_right, 0, layout->name_left - layout->position_right + 3, region_height);
     pixSetInRect(mono_image, logos);
     boxDestroy(&logos);
     // Blank out car class (the symbol can't be extracted and the A and B class
     // text is lost in the image optimization due to the color) 
-    Box *car_class = boxCreate(layout.name_right, 0, layout.car_left - layout.name_right, region_height);
+    Box *car_class = boxCreate(layout->name_right, 0, layout->car_left - layout->name_right, region_height);
     pixSetInRect(mono_image, car_class);
     boxDestroy(&car_class);
     // Blank out line separators
-    blank_separators(mono_image, &layout);
+    blank_separators(mono_image, layout);
 #ifdef DEBUG
     pixWritePng("preprocessed.png", mono_image, 0);
 #endif
-    
-    api->SetImage(mono_image);
-    api->SetRectangle(layout.left, layout.top, layout.right - layout.left, region_height - layout.top);
+    pixDestroy(&remove_bg);
+    pixDestroy(&grey_image);
+    pixDestroy(&cropped_image);
+    pixDestroy(&image);
+    boxDestroy(&box);
+    return mono_image;
+}
+
+void convert(char *filename, tesseract::TessBaseAPI *api)
+{
+    TableLayout layout{};
+    Pix *image = preprocess(filename, api, &layout);
+    api->SetImage(image);
+    api->SetRectangle(layout.left, layout.top, layout.right - layout.left, layout.bottom - layout.top);
     api->Recognize(0);
     tesseract::ResultIterator* ri = api->GetIterator();
     if (ri != 0) {
@@ -415,20 +452,40 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
             }
         }
     }
-
-    pixDestroy(&mono_image);
-    pixDestroy(&remove_bg);
-    pixDestroy(&grey_image);
-    pixDestroy(&cropped_image);
     pixDestroy(&image);
-    boxDestroy(&box);
 }
 
-std::string get_output_filename(const char *filename)
+std::string get_output_filename(const char *filename, const char *extension)
 {
     fs::path p = filename;
-    p.replace_extension(".csv");
+    p.replace_extension(extension);
     return p.string();
+}
+
+int get_points(const Result *result)
+{
+    // TODO: Find fastest lap across all results
+    if (result->dnf) {
+        return points["DNF"];
+    } else {
+        return points[std::to_string(result->position)];
+    }
+}
+
+std::map<std::string, int> get_team_results()
+{
+    std::map<std::string, int> team_results;
+    for (int index = 0; index < 16; ++index) {
+        Result *res = &results[index];
+        int points = get_points(res);
+        std::string team = drivers[res->name];
+        if (team_results.find(team) == team_results.end()) {
+            team_results[team] = points;
+        } else {
+            team_results[team] += points;
+        }
+    }
+    return team_results;
 }
 
 void write_results(const std::string &filename)
@@ -455,6 +512,43 @@ void write_results(const std::string &filename)
     csvfile.close();
 }
 
+void write_annotated_results(const std::string &filename)
+{
+    std::ofstream csvfile;
+    csvfile.open(filename, std::ios::trunc);
+    if (results[0].derby) {
+        csvfile << "Position,Name,Team,Car,Wreck Ratio,Score,Points\n";
+    } else {
+        csvfile << "Position,Name,Team,Car,Time,Best Lap,Points\n";
+    }
+    for (int index = 0; index < 16; ++index) {
+        Result *res = &results[index];
+        std::string team = drivers[res->name];
+        if (!res->name.empty()) {
+            csvfile << res->position;
+            csvfile << ',' << res->name << ',' << team << ',' << res->car << ',';
+            if (res->derby) {
+                csvfile << res->wreck_ratio << ',' << res->score << ',';
+            } else {
+                csvfile << res->time << ',' << res->best_lap << ',';
+            }
+            csvfile << get_points(res) << std::endl;
+        }
+    }
+    csvfile.close();
+}
+
+void write_team_results(const std::string &filename, std::map<std::string, int> team_results)
+{
+    std::ofstream csvfile;
+    csvfile.open(filename, std::ios::trunc);
+    csvfile << "Team,Points\n";
+    for (auto it = team_results.begin(); it != team_results.end(); ++it) {
+        csvfile << it->first << ',' << it->second << std::endl;
+    }
+    csvfile.close();
+}
+
 int main(int argc, char *argv [])
 {
     tesseract::TessBaseAPI *api = new tesseract::TessBaseAPI();
@@ -463,6 +557,7 @@ int main(int argc, char *argv [])
         exit(1);
     }
     read_drivers(&drivers, "drivers.txt");
+    read_points(&points, "points.txt");
     for (int i = 1; i < argc; ++i) {
         char *filename = argv[i];
 #ifdef DEBUG
@@ -470,8 +565,12 @@ int main(int argc, char *argv [])
 #endif
         convert(filename, api);
         clean_positions();
-        std::string csvname = get_output_filename(filename);
+        std::string csvname = get_output_filename(filename, ".csv");
         write_results(csvname);
+        csvname = get_output_filename(filename, ".annotated.csv");
+        write_annotated_results(csvname);
+        csvname = get_output_filename(filename, ".team.csv");
+        write_team_results(csvname, get_team_results());
     }
     api->End();
     return 0;
