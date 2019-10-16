@@ -4,7 +4,7 @@
 #include <fstream>
 #include <algorithm>
 #include <map>
-#include <experimental/filesystem>
+#include <filesystem>
 #include <leptonica/allheaders.h>
 #include <tesseract/baseapi.h>
 
@@ -34,11 +34,6 @@ struct Result {
     bool dnf;
     bool derby;
 };
-
-namespace fs = std::experimental::filesystem;
-
-// TODO: allocate dynamically instead of using global variables
-Result results[16];
 
 std::map<std::string, std::string> drivers; // Driver -> Team
 std::map<std::string, int> points; // Position/Label -> Points
@@ -219,8 +214,12 @@ void read_points(std::map<std::string, int> *points, const char *filename)
     file.close();
 }
 
-bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *layout) 
+Result *process_line(tesseract::ResultIterator* ri, TableLayout *layout) 
 {
+    if (!ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE)) {
+        return nullptr;
+    }
+    Result *result = new Result;
     tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
     do {
         const char* word = ri->GetUTF8Text(level);
@@ -273,25 +272,25 @@ bool process_line(Result *result, tesseract::ResultIterator* ri, TableLayout *la
     result->time = clean_time(result->time);
     result->best_lap = clean_time(result->best_lap);
     result->dnf = iequals(result->time, "DNF");
-    return ri->IsAtBeginningOf(tesseract::RIL_TEXTLINE);
+    return result;
 }
 
 /* Rewrite positions by finding the most common offset (e.g. 0 if viewing
  * positions 1-16, 4 if viewing 5-20). This will introduce errors if whole rows
  * are not detected by the OCR engine. */
-void clean_positions()
+void clean_positions(std::vector<Result> *results)
 {
     unsigned char offsets[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    for (int index = 0; index < 16; ++index) {
-        Result *res = &results[index];
+    for (unsigned int index = 0; index < results->size(); ++index) {
+        Result *res = &(*results)[index];
         int offset = res->position - index;
         if (offset >= 0 && offset < 10) {
             offsets[offset] += 1;
         }
     }
     int majority_offset = std::max_element(offsets, offsets + 10) - offsets;
-    for (int index = 0; index < 16; ++index) {
-        Result *res = &results[index];
+    for (unsigned int index = 0; index < results->size(); ++index) {
+        Result *res = &(*results)[index];
 #ifdef DEBUG
         if (res->position != index + majority_offset) {
             printf("Changing position %d to %d at index %d\n", res->position, index + majority_offset, index);
@@ -437,8 +436,10 @@ Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *
     return mono_image;
 }
 
-void convert(char *filename, tesseract::TessBaseAPI *api)
+std::vector<Result> convert(const char *filename, tesseract::TessBaseAPI *api)
 {
+    std::vector<Result> results{};
+    Result *result;
     TableLayout layout{};
     Pix *image = preprocess(filename, api, &layout);
     api->SetImage(image);
@@ -446,18 +447,17 @@ void convert(char *filename, tesseract::TessBaseAPI *api)
     api->Recognize(0);
     tesseract::ResultIterator* ri = api->GetIterator();
     if (ri != 0) {
-        for (int index = 0; index < 16; ++index) {
-            if (!process_line(&results[index], ri, &layout)) {
-                break;
-            }
+        while ((result = process_line(ri, &layout)) != nullptr) {
+            results.push_back(*result);
         }
     }
     pixDestroy(&image);
+    return results;
 }
 
 std::string get_output_filename(const char *filename, const char *extension)
 {
-    fs::path p = filename;
+    std::filesystem::path p = filename;
     p.replace_extension(extension);
     return p.string();
 }
@@ -472,13 +472,12 @@ int get_points(const Result *result)
     }
 }
 
-std::map<std::string, int> get_team_results()
+std::map<std::string, int> get_team_results(std::vector<Result> results)
 {
     std::map<std::string, int> team_results;
-    for (int index = 0; index < 16; ++index) {
-        Result *res = &results[index];
-        int points = get_points(res);
-        std::string team = drivers[res->name];
+    for (auto &res: results) {
+        int points = get_points(&res);
+        std::string team = drivers[res.name];
         if (team_results.find(team) == team_results.end()) {
             team_results[team] = points;
         } else {
@@ -488,7 +487,7 @@ std::map<std::string, int> get_team_results()
     return team_results;
 }
 
-void write_results(const std::string &filename)
+void write_results(const std::string &filename, const std::vector<Result> results)
 {
     std::ofstream csvfile;
     csvfile.open(filename, std::ios::trunc);
@@ -497,22 +496,21 @@ void write_results(const std::string &filename)
     } else {
         csvfile << "Position,Name,Car,Time,Best Lap\n";
     }
-    for (int index = 0; index < 16; ++index) {
-        Result *res = &results[index];
-        if (!res->name.empty()) {
-            csvfile << res->position;
-            csvfile << ',' << res->name << ',' << res->car << ',';
-            if (res->derby) {
-                csvfile << res->wreck_ratio << ',' << res->score << std::endl;
+    for (auto &res: results) {
+        if (!res.name.empty()) {
+            csvfile << res.position;
+            csvfile << ',' << res.name << ',' << res.car << ',';
+            if (res.derby) {
+                csvfile << res.wreck_ratio << ',' << res.score << std::endl;
             } else {
-                csvfile << res->time << ',' << res->best_lap << std::endl;
+                csvfile << res.time << ',' << res.best_lap << std::endl;
             }
         }
     }
     csvfile.close();
 }
 
-void write_annotated_results(const std::string &filename)
+void write_annotated_results(const std::string &filename, const std::vector<Result> results)
 {
     std::ofstream csvfile;
     csvfile.open(filename, std::ios::trunc);
@@ -521,18 +519,17 @@ void write_annotated_results(const std::string &filename)
     } else {
         csvfile << "Position,Name,Team,Car,Time,Best Lap,Points\n";
     }
-    for (int index = 0; index < 16; ++index) {
-        Result *res = &results[index];
-        std::string team = drivers[res->name];
-        if (!res->name.empty()) {
-            csvfile << res->position;
-            csvfile << ',' << res->name << ',' << team << ',' << res->car << ',';
-            if (res->derby) {
-                csvfile << res->wreck_ratio << ',' << res->score << ',';
+    for (auto &res: results) {
+        std::string team = drivers[res.name];
+        if (!res.name.empty()) {
+            csvfile << res.position;
+            csvfile << ',' << res.name << ',' << team << ',' << res.car << ',';
+            if (res.derby) {
+                csvfile << res.wreck_ratio << ',' << res.score << ',';
             } else {
-                csvfile << res->time << ',' << res->best_lap << ',';
+                csvfile << res.time << ',' << res.best_lap << ',';
             }
-            csvfile << get_points(res) << std::endl;
+            csvfile << get_points(&res) << std::endl;
         }
     }
     csvfile.close();
@@ -563,14 +560,15 @@ int main(int argc, char *argv [])
 #ifdef DEBUG
         printf("Processing %d / %d %s ...\n", i, argc-1, filename);
 #endif
-        convert(filename, api);
-        clean_positions();
+        std::vector<Result> results{};
+        results = convert(filename, api);
+        clean_positions(&results);
         std::string csvname = get_output_filename(filename, ".csv");
-        write_results(csvname);
+        write_results(csvname, results);
         csvname = get_output_filename(filename, ".annotated.csv");
-        write_annotated_results(csvname);
+        write_annotated_results(csvname, results);
         csvname = get_output_filename(filename, ".team.csv");
-        write_team_results(csvname, get_team_results());
+        write_team_results(csvname, get_team_results(results));
     }
     api->End();
     return 0;

@@ -5,7 +5,7 @@ FLAGS = -std=c++17 -Wall -g
 .PHONY: clean debug test
 
 $(NAME): main.cpp
-	g++ -o $@ $< $(FLAGS) $(LIBS)
+	g++-8 -o $@ $< $(FLAGS) $(LIBS)
 
 clean:
 	rm -f ./$(NAME)
