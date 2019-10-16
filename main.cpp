@@ -109,7 +109,7 @@ bool is_invalid_time_digit(char c)
 
 bool is_invalid_car_digit(char c)
 {
-    return not (std::isalnum(c) || (c == ' '));
+    return (!(std::isalnum(c) || (c == ' ')));
 }
 
 // https://stackoverflow.com/a/4119881
@@ -232,15 +232,17 @@ Result *process_line(tesseract::ResultIterator* ri, TableLayout *layout)
         }
 
         std::string token = word;
+		printf("DEBUG: %s @ %d %d %d %d\n", word, x1, y1, x2, y2);
+
         if (result->raw_position.empty() && x1 >= (int)layout->position_left && x2 < (int)layout->position_right) {
             result->raw_position = std::string(word);
             result->position = std::atoi(word);
-        } else if (result->name.empty() && x1 >= (int)layout->name_left) {
+        } else if (result->name.empty() && x1 >= (int)layout->name_left - 15) {
             result->name = token;
         } else if (!result->name.empty() && x2 < (int)layout->name_right) {
             result->name.append(" ");
             result->name.append(token);
-        } else if (x1 >= (int)layout->car_left && x2 < (int)layout->car_right) {
+        } else if (x1 >= (int)layout->car_left - 15 && x2 < (int)layout->car_right) {
             if (!result->car.empty()) {
                 result->car.append(" ");
             }
@@ -323,7 +325,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             layout->left = x1;
             layout->top = y2; 
         } else if (iequals(token, "NAME")) {
-            layout->name_left = x1 - 5;
+            layout->name_left = x1 - 10;
         } else if (iequals(token, "PING")) { // multiplayer only
             layout->name_right = x1 - 10;
         } else if (iequals(token, "CLASS") && layout->name_right == 0) { // fallback for singleplayer
