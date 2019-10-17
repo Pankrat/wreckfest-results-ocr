@@ -2,14 +2,38 @@
 
 Extract data from screenshots of Wreckfest race results and dump those as plain text.
 
+## Installation
+
+Unzip the executable and the data directory in any place, e.g. the Wreckfest
+screenshot directory for easy access.
+
 ## Usage
 
-Call the program with a Wreckfest screenshot picture either on the command line or by dropping the file over the executable in your file manager.
-It will store a CSV file with the extracted data in the current directory. This can be opened in Excel or any other spreadsheet editor.
+Call the program with a Wreckfest screenshot picture either on the command line
+or by dropping the file over the executable in your file manager.
+It will store a CSV file with the extracted data in the current directory. This
+can be opened in Excel or any other spreadsheet editor.
+
+### Notes
+
+Screenshots should be made in fullscreen mode after the race has ended but
+before players can return to the lobby. Screenshots can be made from a local
+game or from a Youtube video or Twitch stream if the quality is good and the
+result section is not obstructed by any banners or overlays.
 
 ### Assign score based on position
 
-TODO
+To assign points based on position, add a file `points.txt` with the following format:
+
+```
+1 20
+2 15
+...
+DNF 0
+```
+
+This assigns 20 points to the player on the first position and 15 to the
+second. 
 
 ### Driver names & teams
 
