@@ -417,7 +417,7 @@ Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *
         exit(1);
     }
     // Blank out player logos
-    Box *logos = boxCreate(layout->position_right, 0, layout->name_left - layout->position_right + 3, region_height);
+    Box *logos = boxCreate(layout->position_right, 0, layout->name_left - layout->position_right, region_height);
     pixSetInRect(mono_image, logos);
     boxDestroy(&logos);
     // Blank out car class (the symbol can't be extracted and the A and B class
