@@ -12,7 +12,9 @@ def run_conversion(filename):
     csv = os.path.splitext(filename)[0] + '.csv'
     if os.path.exists(csv):
         os.remove(csv)
-    subprocess.run(["./wfocr", filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    executable = os.environ.get("EXE", "./wfocr")
+    print("Running '{} {}'".format(executable, filename))
+    subprocess.run([executable, filename], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def check(filename, verbose=True):

@@ -325,7 +325,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             layout->left = x1;
             layout->top = y2; 
         } else if (iequals(token, "NAME")) {
-            layout->name_left = x1 - 10;
+            layout->name_left = x1;
         } else if (iequals(token, "PING")) { // multiplayer only
             layout->name_right = x1 - 10;
         } else if (iequals(token, "CLASS") && layout->name_right == 0) { // fallback for singleplayer
