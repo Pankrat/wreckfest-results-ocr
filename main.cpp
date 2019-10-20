@@ -122,6 +122,13 @@ bool iequals(const std::string& a, const std::string& b)
                       });
 }
 
+std::string get_output_filename(const char* filename, const char* extension)
+{
+    std::filesystem::path p = filename;
+    p.replace_extension(extension);
+    return p.string();
+}
+
 std::string clean_driver(std::string &driver)
 {
     if (drivers.find(driver) == drivers.end()) {
@@ -309,6 +316,8 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
     tesseract::ResultIterator* ri = api->GetIterator();
     ri->SetBoundingBoxComponents(false, false);
     tesseract::PageIteratorLevel level = tesseract::RIL_WORD;
+    layout->bottom = pixGetHeight(image);
+    layout->right = pixGetWidth(image);
     while (ri != 0) {
         const char* word = ri->GetUTF8Text(level);
         int x1, y1, x2, y2;
@@ -338,7 +347,7 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
         } else if (iequals(token, "WRECK")) {
             layout->car_right = x1 - 10;
             layout->wreck_ratio_left = x1 - 5;
-        } else if (iequals(token, "BEST")) {
+        } else if (iequals(token, "BEST") || iequals(token, "BESTLAP")) {
             layout->time_right = x1 - 15;
             layout->lap_left = x1 - 15;
             layout->right = x2 + 250; // XXX 
@@ -353,7 +362,6 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             break;
         }
     }
-    layout->bottom = pixGetHeight(image);
     printf("Layout: %d,%d,%d,%d\n", layout->left, layout->top, layout->right, layout->bottom);
     return (layout->top != 0);
 }
@@ -392,6 +400,10 @@ Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *
 {
     l_int32 width, height;
     Pix *image = pixRead(filename);
+    if (image == nullptr) {
+        fprintf(stderr, "Could not read input file %s.\n", filename);
+        exit(1);
+    }
     pixGetDimensions(image, &width, &height, nullptr);
     float aspect_ratio = (float)width / height;
     float crop_factor = 3.0;
@@ -428,7 +440,7 @@ Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *
     // Blank out line separators
     blank_separators(mono_image, layout);
 #ifdef DEBUG
-    pixWritePng("preprocessed.png", mono_image, 0);
+    pixWritePng(get_output_filename(filename, ".preprocessed.png").c_str(), mono_image, 0);
 #endif
     pixDestroy(&remove_bg);
     pixDestroy(&grey_image);
@@ -455,13 +467,6 @@ std::vector<Result> convert(const char *filename, tesseract::TessBaseAPI *api)
     }
     pixDestroy(&image);
     return results;
-}
-
-std::string get_output_filename(const char *filename, const char *extension)
-{
-    std::filesystem::path p = filename;
-    p.replace_extension(extension);
-    return p.string();
 }
 
 int get_points(const Result *result)
