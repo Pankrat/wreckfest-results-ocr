@@ -353,9 +353,9 @@ bool detect_layout(Pix *image, tesseract::TessBaseAPI *api, TableLayout *layout)
             layout->right = x2 + 250; // XXX 
             break;
         } else if (iequals(token, "SCORE")) {
-            layout->wreck_ratio_right = x1 - 10;
-            layout->score_left = x1 - 5;
-            layout->right = x2 + 250; // XXX
+            layout->wreck_ratio_right = x1 - 15;
+            layout->score_left = x1 - 15;
+            layout->right = x2 + 100; // XXX
             break;
         }
         if (!ri->Next(level)) {
@@ -414,7 +414,7 @@ Pix *preprocess(const char *filename, tesseract::TessBaseAPI *api, TableLayout *
     // Roughly crop image to results section
     l_int32 left = (l_int32)(width / crop_factor);
     l_int32 top = height / 5;
-    l_int32 region_width = (l_int32)(width - left - (width / (int)(crop_factor * crop_factor * crop_factor / 3)));
+    l_int32 region_width = width - left;
     l_int32 region_height = height - top - (height / 12);
     Box *box = boxCreate(left, top, region_width, region_height);
     Pix *cropped_image = pixClipRectangle(image, box, nullptr);
